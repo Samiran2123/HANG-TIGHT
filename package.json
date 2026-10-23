@@ -1,0 +1,23 @@
+{
+  "name": "food-ordering-pro",
+  "version": "1.0.0",
+  "description": "Production-Style Food Ordering Platform with Supabase, Express, React, and Google Sheets",
+  "scripts": {
+    "client:install": "npm --prefix client install",
+    "server:install": "npm --prefix server install",
+    "install:all": "npm run server:install && npm run client:install",
+    "server:dev": "npm --prefix server run dev",
+    "client:dev": "npm --prefix client run dev",
+    "client:build": "npm --prefix client run build",
+    "server:test": "npm --prefix server test"
+  },
+  "keywords": [
+    "food-ordering",
+    "react",
+    "express",
+    "supabase",
+    "google-sheets"
+  ],
+  "author": "",
+  "license": "MIT"
+}
