@@ -41,7 +41,12 @@ async function sendToGoogleSheets(action, data) {
     }
 
     const result = await response.json();
-    console.info(`[GoogleSheets] Action ${action} synchronized successfully.`, result);
+    if (result && result.success === false) {
+      console.warn(`[GoogleSheets] Webhook returned failure for ${action}: ${result.message}`);
+      return { success: false, error: result.message, result };
+    }
+
+    console.info(`[GoogleSheets] Action ${action} synchronized successfully.`);
     return { success: true, result };
   } catch (err) {
     console.error(`[GoogleSheets] Failed to sync ${action}: ${err.message}`);
@@ -80,5 +85,19 @@ export const sheetsService = {
    */
   async healthCheck() {
     return sendToGoogleSheets('HEALTH_CHECK', {});
+  },
+
+  /**
+   * Repairs known phone cells in Google Sheets affected by formula interpretation
+   */
+  async repairPhoneCells() {
+    return sendToGoogleSheets('REPAIR_PHONE_CELLS', {});
+  },
+
+  /**
+   * Retrieves order status and phone records for verification
+   */
+  async getOrdersAudit() {
+    return sendToGoogleSheets('GET_ORDERS_AUDIT', {});
   }
 };

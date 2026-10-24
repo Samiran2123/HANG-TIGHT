@@ -11,71 +11,93 @@ import {
   LogOut, 
   Clock, 
   Layers, 
-  Sparkles 
+  Sparkles,
+  CheckCircle2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 
 export default function Navbar({ onOpenAuth, onOpenSearch }) {
-  const { user, profile, isAdmin, logout, loginAsDemoCustomer, loginAsDemoAdmin } = useAuth();
+  const { user, profile, isAdmin, logout, loginAsDemoCustomer, loginAsDemoAdmin, isDemoAllowed } = useAuth();
   const { itemCount, openCart } = useCart();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
 
   const handleLogout = async () => {
-    await logout();
-    setUserDropdownOpen(false);
-    navigate('/');
+    try {
+      await logout();
+      setUserDropdownOpen(false);
+      setToastMessage('Signed out successfully.');
+      setTimeout(() => setToastMessage(null), 3000);
+      navigate('/');
+    } catch (err) {
+      console.error('Sign-out exception:', err);
+    }
   };
 
   return (
     <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 transition-all">
+      {/* Accessible Sign-Out Notification */}
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          id="signout-toast"
+          className="fixed top-20 right-6 z-50 animate-fade-in p-3.5 rounded-2xl bg-slate-900/95 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2.5 shadow-2xl backdrop-blur-md"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="font-medium">{toastMessage}</span>
+        </div>
+      )}
       {/* Top Demo Helper Notification Bar for evaluators & academic reviewers */}
-      <div className="bg-gradient-to-r from-brand-900/60 via-slate-900/80 to-brand-900/60 border-b border-brand-500/20 px-4 py-1.5 text-xs text-slate-300 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-3.5 h-3.5 text-brand-400 shrink-0" />
-          <span className="hidden sm:inline">Academic / Live Demo Mode:</span>
-          <span className="text-slate-400">Current Role:</span>
-          <span className={`font-semibold px-2 py-0.5 rounded-full text-[10px] ${
-            isAdmin ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
-            user ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
-            'bg-slate-700/50 text-slate-300'
-          }`}>
-            {isAdmin ? 'Admin' : user ? 'Customer' : 'Guest'}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {!user && (
-            <>
+      {isDemoAllowed && (
+        <div className="bg-gradient-to-r from-brand-900/60 via-slate-900/80 to-brand-900/60 border-b border-brand-500/20 px-4 py-1.5 text-xs text-slate-300 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-3.5 h-3.5 text-brand-400 shrink-0" />
+            <span className="hidden sm:inline">Academic / Live Demo Mode:</span>
+            <span className="text-slate-400">Current Role:</span>
+            <span className={`font-semibold px-2 py-0.5 rounded-full text-[10px] ${
+              isAdmin ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+              user ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+              'bg-slate-700/50 text-slate-300'
+            }`}>
+              {isAdmin ? 'Admin' : user ? 'Customer' : 'Guest'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {!user && (
+              <>
+                <button 
+                  onClick={loginAsDemoCustomer}
+                  className="hover:text-brand-300 underline transition-colors"
+                  title="Log in instantly as test customer"
+                >
+                  1-Click Customer
+                </button>
+                <span className="text-slate-600">|</span>
+                <button 
+                  onClick={loginAsDemoAdmin}
+                  className="hover:text-amber-300 underline transition-colors"
+                  title="Log in instantly as admin"
+                >
+                  1-Click Admin
+                </button>
+              </>
+            )}
+            {user && (
               <button 
-                onClick={loginAsDemoCustomer}
-                className="hover:text-brand-300 underline transition-colors"
-                title="Log in instantly as test customer"
+                onClick={handleLogout}
+                className="hover:text-rose-400 text-slate-400 transition-colors"
               >
-                1-Click Customer
+                Switch Account
               </button>
-              <span className="text-slate-600">|</span>
-              <button 
-                onClick={loginAsDemoAdmin}
-                className="hover:text-amber-300 underline transition-colors"
-                title="Log in instantly as admin"
-              >
-                1-Click Admin
-              </button>
-            </>
-          )}
-          {user && (
-            <button 
-              onClick={handleLogout}
-              className="hover:text-rose-400 text-slate-400 transition-colors"
-            >
-              Switch Account
-            </button>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
         {/* Brand Logo */}
@@ -85,7 +107,7 @@ export default function Navbar({ onOpenAuth, onOpenSearch }) {
           </div>
           <div>
             <span className="text-xl font-bold tracking-tight text-white flex items-center gap-1 font-serif">
-              AURA <span className="text-brand-400 font-sans text-xs tracking-widest uppercase font-semibold px-1.5 py-0.5 rounded bg-brand-500/10 border border-brand-500/20">Pro</span>
+              HANG TIGHT
             </span>
             <p className="text-[10px] text-slate-400 -mt-1 hidden sm:block tracking-wide">Artisanal Dining</p>
           </div>

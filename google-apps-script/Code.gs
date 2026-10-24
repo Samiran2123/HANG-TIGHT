@@ -29,13 +29,27 @@ const SHEET_NAMES = {
 };
 
 /**
+ * Formats a phone number safely for Google Sheets to prevent formula interpretation
+ * and preserve '+', leading zeros, spaces, and hyphens.
+ */
+function formatPhoneForSheets(phone) {
+  if (phone === null || phone === undefined) return '';
+  const phoneStr = String(phone).trim();
+  if (!phoneStr) return '';
+  // If it already starts with an apostrophe, return as-is
+  if (phoneStr.startsWith("'")) return phoneStr;
+  // Prefix with single quote so Google Sheets treats it strictly as plain text
+  return "'" + phoneStr;
+}
+
+/**
  * Initializes all required sheets and header rows if they do not exist
  */
 function initializeSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   // 1. Customers Tab
-  getOrCreateSheet(ss, SHEET_NAMES.CUSTOMERS, [
+  const custSheet = getOrCreateSheet(ss, SHEET_NAMES.CUSTOMERS, [
     'User ID',
     'Email',
     'Full Name',
@@ -45,9 +59,12 @@ function initializeSheets() {
     'Registered At',
     'Last Synced At'
   ]);
+  try {
+    custSheet.getRange('D:D').setNumberFormat('@');
+  } catch (e) {}
 
   // 2. Orders Tab
-  getOrCreateSheet(ss, SHEET_NAMES.ORDERS, [
+  const ordSheet = getOrCreateSheet(ss, SHEET_NAMES.ORDERS, [
     'Order ID',
     'Order Number',
     'Customer Email',
@@ -65,6 +82,9 @@ function initializeSheets() {
     'Created At',
     'Last Synced At'
   ]);
+  try {
+    ordSheet.getRange('E:E').setNumberFormat('@');
+  } catch (e) {}
 
   // 3. Order Items Tab
   getOrCreateSheet(ss, SHEET_NAMES.ORDER_ITEMS, [
@@ -121,11 +141,11 @@ function doPost(e) {
     const scriptProperties = PropertiesService.getScriptProperties();
     const expectedSecret = scriptProperties.getProperty('WEBHOOK_SECRET');
 
-    // Secret verification via payload.secret or Authorization header
-    const providedSecret = payload.secret;
-    if (expectedSecret && providedSecret !== expectedSecret) {
-      logSync('AUTH_FAILURE', 'N/A', 'REJECTED', 'Invalid or missing secret key');
-      return jsonResponse(false, 'Unauthorized: Invalid secret key', 401);
+    // Fail-closed secret verification: reject if expected secret is not configured or provided secret does not match
+    const providedSecret = payload ? payload.secret : null;
+    if (!expectedSecret || !providedSecret || providedSecret !== expectedSecret) {
+      logSync('AUTH_FAILURE', 'N/A', 'REJECTED', !expectedSecret ? 'Server webhook secret unconfigured' : 'Invalid or missing secret key');
+      return jsonResponse(false, 'Unauthorized: Invalid or unconfigured secret key', 401);
     }
 
     const { action, data } = payload;
@@ -143,6 +163,12 @@ function doPost(e) {
 
       case 'HEALTH_CHECK':
         return jsonResponse(true, 'Google Apps Script webhook is online and authenticated', 200);
+
+      case 'REPAIR_PHONE_CELLS':
+        return repairPhoneCells(ss);
+
+      case 'GET_ORDERS_AUDIT':
+        return getOrdersAudit(ss);
 
       default:
         return jsonResponse(false, 'Unknown action: ' + action, 400);
@@ -180,11 +206,12 @@ function syncCustomer(ss, customer) {
   }
 
   const nowStr = new Date().toISOString();
+  const safePhone = formatPhoneForSheets(customer.phone);
   const rowData = [
     customer.id,
     customer.email || '',
     customer.full_name || '',
-    customer.phone || '',
+    safePhone,
     customer.role || 'customer',
     customer.address || '',
     customer.created_at || nowStr,
@@ -192,10 +219,16 @@ function syncCustomer(ss, customer) {
   ];
 
   if (rowIndex > 0) {
+    try {
+      sheet.getRange(rowIndex, 4).setNumberFormat('@');
+    } catch (e) {}
     sheet.getRange(rowIndex, 1, 1, rowData.length).setValues([rowData]);
     logSync('SYNC_CUSTOMER', customer.id, 'UPDATED', 'Updated customer ' + customer.email);
   } else {
     sheet.appendRow(rowData);
+    try {
+      sheet.getRange(sheet.getLastRow(), 4).setNumberFormat('@');
+    } catch (e) {}
     logSync('SYNC_CUSTOMER', customer.id, 'INSERTED', 'Appended customer ' + customer.email);
   }
 
@@ -226,12 +259,13 @@ function syncOrder(ss, order) {
     .map(function(item) { return item.quantity + 'x ' + item.food_name; })
     .join(', ');
 
+  const safePhone = formatPhoneForSheets(order.customer_phone);
   const rowData = [
     order.id,
     order.order_number || '',
     order.customer_email || '',
     order.customer_name || '',
-    order.customer_phone || '',
+    safePhone,
     order.status || 'pending',
     order.payment_status || 'pending',
     order.payment_method || 'cod',
@@ -246,17 +280,35 @@ function syncOrder(ss, order) {
   ];
 
   if (rowIndex > 0) {
+    try {
+      orderSheet.getRange(rowIndex, 5).setNumberFormat('@');
+    } catch (e) {}
     orderSheet.getRange(rowIndex, 1, 1, rowData.length).setValues([rowData]);
   } else {
     orderSheet.appendRow(rowData);
+    try {
+      orderSheet.getRange(orderSheet.getLastRow(), 5).setNumberFormat('@');
+    } catch (e) {}
   }
 
-  // Sync order items
+  // Sync order items idempotently (prevent duplicate rows on repeated syncs)
   if (Array.isArray(order.items) && order.items.length > 0) {
     const itemsSheet = ss.getSheetByName(SHEET_NAMES.ORDER_ITEMS);
+    const itemsData = itemsSheet.getDataRange().getValues();
+
+    // Map existing item IDs to row indices (1-indexed for SpreadsheetApp)
+    const existingItemRows = {};
+    for (let i = 1; i < itemsData.length; i++) {
+      const itemId = itemsData[i][0];
+      if (itemId) {
+        existingItemRows[itemId] = i + 1;
+      }
+    }
+
     order.items.forEach(function(item) {
-      itemsSheet.appendRow([
-        item.id || Utilities.getUuid(),
+      const itemId = item.id || (order.id + '_' + (item.food_name || 'item'));
+      const itemRowData = [
+        itemId,
         order.id,
         order.order_number || '',
         item.food_name || '',
@@ -264,7 +316,14 @@ function syncOrder(ss, order) {
         item.quantity || 1,
         Number(item.subtotal || 0).toFixed(2),
         order.created_at || nowStr
-      ]);
+      ];
+
+      const existingRow = existingItemRows[itemId];
+      if (existingRow) {
+        itemsSheet.getRange(existingRow, 1, 1, itemRowData.length).setValues([itemRowData]);
+      } else {
+        itemsSheet.appendRow(itemRowData);
+      }
     });
   }
 
@@ -337,3 +396,80 @@ function jsonResponse(success, message, statusCode, extra) {
   return ContentService.createTextOutput(JSON.stringify(payload))
     .setMimeType(ContentService.MimeType.JSON);
 }
+
+/**
+ * Repairs only the two specific phone cells for known orders affected by formula interpretation.
+ * Preserves all other columns and values exactly.
+ */
+function repairPhoneCells(ss) {
+  const sheet = ss.getSheetByName(SHEET_NAMES.ORDERS);
+  if (!sheet) {
+    return jsonResponse(false, 'Orders sheet not found', 404);
+  }
+
+  const data = sheet.getDataRange().getValues();
+  // Map of verified target orders to authoritative phone numbers from Supabase records
+  const targets = {
+    'ORD-20261023-2667': '+1 555-0199',
+    '6f1035a9-a84a-434d-aa3e-f178cb4c5770': '+1 555-0199',
+    'ORD-20261023-1133': '+1 555-0199',
+    'd2caec13-5e0f-48ba-8bad-baa52edb1ec6': '+1 555-0199'
+  };
+
+  const repaired = [];
+
+  for (let i = 1; i < data.length; i++) {
+    const orderId = String(data[i][0] || '').trim();
+    const orderNumber = String(data[i][1] || '').trim();
+
+    const expectedPhone = targets[orderNumber] || targets[orderId];
+    if (expectedPhone) {
+      const rowIndex = i + 1; // 1-indexed row in sheet
+      const phoneCell = sheet.getRange(rowIndex, 5); // Column E: Customer Phone
+      phoneCell.setNumberFormat('@');
+      phoneCell.setValue("'" + expectedPhone);
+      repaired.push({ row: rowIndex, orderNumber: orderNumber, phone: expectedPhone });
+      logSync('REPAIR_PHONE', orderNumber || orderId, 'SUCCESS', 'Repaired phone cell to ' + expectedPhone);
+    }
+  }
+
+  return jsonResponse(true, 'Phone cells repair complete', 200, { repaired: repaired });
+}
+
+/**
+ * Manual execution trigger for the Apps Script editor toolbar
+ */
+function repairPhoneCellsManual() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return repairPhoneCells(ss);
+}
+
+/**
+ * Read-only inspection of orders in Google Sheets for verification
+ */
+function getOrdersAudit(ss) {
+  const sheet = ss.getSheetByName(SHEET_NAMES.ORDERS);
+  if (!sheet) {
+    return jsonResponse(false, 'Orders sheet not found', 404);
+  }
+
+  const data = sheet.getDataRange().getValues();
+  const orders = [];
+
+  for (let i = 1; i < data.length; i++) {
+    orders.push({
+      order_id: data[i][0],
+      order_number: data[i][1],
+      customer_email: data[i][2],
+      customer_name: data[i][3],
+      customer_phone: data[i][4],
+      status: data[i][5],
+      payment_status: data[i][6],
+      payment_method: data[i][7],
+      total_amount: data[i][11]
+    });
+  }
+
+  return jsonResponse(true, 'Orders retrieved successfully', 200, { orders: orders });
+}
+

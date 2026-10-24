@@ -106,7 +106,8 @@ BEGIN
   );
   RETURN new;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
@@ -120,7 +121,8 @@ BEGIN
   NEW.updated_at = timezone('utc'::text, now());
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS update_profiles_timestamp ON public.profiles;
 CREATE TRIGGER update_profiles_timestamp

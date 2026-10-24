@@ -20,12 +20,7 @@ CREATE POLICY "Admins can upload food images"
   ON storage.objects FOR INSERT
   WITH CHECK (
     bucket_id = 'food-images' 
-    AND (
-      EXISTS (
-        SELECT 1 FROM public.profiles 
-        WHERE id = auth.uid() AND role = 'admin'
-      )
-    )
+    AND public.is_admin()
   );
 
 DROP POLICY IF EXISTS "Admins can update food images" ON storage.objects;
@@ -33,12 +28,7 @@ CREATE POLICY "Admins can update food images"
   ON storage.objects FOR UPDATE
   USING (
     bucket_id = 'food-images' 
-    AND (
-      EXISTS (
-        SELECT 1 FROM public.profiles 
-        WHERE id = auth.uid() AND role = 'admin'
-      )
-    )
+    AND public.is_admin()
   );
 
 DROP POLICY IF EXISTS "Admins can delete food images" ON storage.objects;
@@ -46,12 +36,7 @@ CREATE POLICY "Admins can delete food images"
   ON storage.objects FOR DELETE
   USING (
     bucket_id = 'food-images' 
-    AND (
-      EXISTS (
-        SELECT 1 FROM public.profiles 
-        WHERE id = auth.uid() AND role = 'admin'
-      )
-    )
+    AND public.is_admin()
   );
 
 -- 2. Helper procedure to safely promote a user to admin by email (Run from SQL Editor)
@@ -71,4 +56,13 @@ BEGIN
 
   RETURN 'Success: User ' || target_email || ' has been granted Admin role.';
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public, pg_temp;
+
+ALTER FUNCTION public.set_admin_role_by_email(TEXT) OWNER TO postgres;
+
+-- Revoke public execution to prevent unauthorized privilege escalation via Supabase RPC
+REVOKE ALL ON FUNCTION public.set_admin_role_by_email(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_admin_role_by_email(TEXT) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.set_admin_role_by_email(TEXT) TO service_role;
+

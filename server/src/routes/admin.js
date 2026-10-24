@@ -2,14 +2,26 @@ import express from 'express';
 import { getAdminClient } from '../services/supabase.js';
 import { sheetsService } from '../services/sheetsService.js';
 import { authenticateToken, requireAdmin } from '../middleware/auth.js';
-import { validateFoodInput, validateStatusUpdate } from '../middleware/validation.js';
-import { mockOrders, mockFoods, mockProfiles } from '../services/mockStore.js';
+import { validateFoodInput, validateStatusUpdate, validateCategoryInput } from '../middleware/validation.js';
+import { mockOrders, mockFoods, mockProfiles, mockCategories } from '../services/mockStore.js';
 
 const router = express.Router();
 
 // Enforce authentication & admin privilege on all routes in this router
 router.use(authenticateToken);
 router.use(requireAdmin);
+
+// In production, require live database connection (never allow mockStore admin operations in production)
+router.use((req, res, next) => {
+  const supabase = getAdminClient();
+  if (!supabase && process.env.NODE_ENV === 'production') {
+    return res.status(503).json({
+      success: false,
+      error: 'Administrative operations unavailable in production: Supabase database connection is not configured.'
+    });
+  }
+  next();
+});
 
 /**
  * GET /api/admin/metrics
@@ -307,9 +319,144 @@ router.delete('/foods/:id', async (req, res, next) => {
   }
 });
 
+function slugify(text) {
+  return text
+    .toString()
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w-]+/g, '')
+    .replace(/--+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+$/, '');
+}
+
+/**
+ * POST /api/admin/categories
+ * Create category
+ */
+router.post('/categories', validateCategoryInput, async (req, res, next) => {
+  const { name, slug, description, image_url, sort_order = 0 } = req.body;
+  const supabase = getAdminClient();
+
+  const generatedSlug = (slug && slug.trim()) ? slugify(slug) : slugify(name);
+  const categoryPayload = {
+    name: name.trim(),
+    slug: generatedSlug,
+    description: description ? description.trim() : null,
+    image_url: image_url ? image_url.trim() : null,
+    sort_order: Number(sort_order) || 0,
+    created_at: new Date().toISOString()
+  };
+
+  try {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('categories')
+        .insert([categoryPayload])
+        .select()
+        .single();
+
+      if (error) throw error;
+      return res.status(201).json({ success: true, message: 'Category created', data });
+    } else {
+      const newCategory = { id: `cat-mock-${Date.now()}`, ...categoryPayload };
+      mockCategories.push(newCategory);
+      return res.status(201).json({ success: true, message: 'Category created', data: newCategory });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /api/admin/categories/:id
+ * Update category
+ */
+router.put('/categories/:id', validateCategoryInput, async (req, res, next) => {
+  const { id } = req.params;
+  const { name, slug, description, image_url, sort_order } = req.body;
+  const supabase = getAdminClient();
+
+  const updatePayload = {
+    name: name.trim(),
+    ...(slug !== undefined && { slug: slugify(slug || name) }),
+    ...(description !== undefined && { description: description ? description.trim() : null }),
+    ...(image_url !== undefined && { image_url: image_url ? image_url.trim() : null }),
+    ...(sort_order !== undefined && { sort_order: Number(sort_order) || 0 })
+  };
+
+  try {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('categories')
+        .update(updatePayload)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return res.json({ success: true, message: 'Category updated', data });
+    } else {
+      const idx = mockCategories.findIndex(c => c.id === id);
+      if (idx === -1) return res.status(404).json({ success: false, error: 'Category not found' });
+      mockCategories[idx] = { ...mockCategories[idx], ...updatePayload };
+      return res.json({ success: true, message: 'Category updated', data: mockCategories[idx] });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/admin/categories/:id
+ * Delete category with safety check for linked foods
+ */
+router.delete('/categories/:id', async (req, res, next) => {
+  const { id } = req.params;
+  const supabase = getAdminClient();
+
+  try {
+    if (supabase) {
+      // Check if any foods currently reference this category
+      const { data: linkedFoods, error: countErr } = await supabase
+        .from('foods')
+        .select('id, name')
+        .eq('category_id', id);
+
+      if (countErr) throw countErr;
+
+      if (linkedFoods && linkedFoods.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: `Cannot delete category: ${linkedFoods.length} food item(s) are assigned to it. Please reassign or delete those dishes first.`
+        });
+      }
+
+      const { error } = await supabase.from('categories').delete().eq('id', id);
+      if (error) throw error;
+      return res.json({ success: true, message: 'Category deleted successfully' });
+    } else {
+      const linkedCount = mockFoods.filter(f => f.category_id === id).length;
+      if (linkedCount > 0) {
+        return res.status(400).json({
+          success: false,
+          error: `Cannot delete category: ${linkedCount} food item(s) are assigned to it. Please reassign or delete those dishes first.`
+        });
+      }
+
+      const idx = mockCategories.findIndex(c => c.id === id);
+      if (idx !== -1) mockCategories.splice(idx, 1);
+      return res.json({ success: true, message: 'Category deleted successfully' });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * GET /api/admin/customers
- * Customer directory with order counts
+ * Customer directory with order counts and privacy projection
  */
 router.get('/customers', async (req, res, next) => {
   const supabase = getAdminClient();
@@ -319,16 +466,23 @@ router.get('/customers', async (req, res, next) => {
       success: true,
       count: mockProfiles.length,
       data: mockProfiles.map(p => ({
-        ...p,
+        id: p.id,
+        full_name: p.full_name,
+        email: p.email,
+        phone: p.phone,
+        address: p.address,
+        role: p.role,
+        created_at: p.created_at,
         total_orders: mockOrders.filter(o => o.user_id === p.id || o.customer_email === p.email).length
       }))
     });
   }
 
   try {
+    // Select strictly customer-safe fields to preserve privacy
     const { data: profiles, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select('id, full_name, email, phone, address, role, created_at')
       .order('created_at', { ascending: false });
 
     if (error) throw error;

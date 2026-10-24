@@ -85,6 +85,17 @@ export const api = {
     method: 'DELETE'
   }),
   getAdminCustomers: () => apiRequest('/admin/customers'),
+  createCategory: (categoryData) => apiRequest('/admin/categories', {
+    method: 'POST',
+    body: JSON.stringify(categoryData)
+  }),
+  updateCategory: (id, categoryData) => apiRequest(`/admin/categories/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(categoryData)
+  }),
+  deleteCategory: (id) => apiRequest(`/admin/categories/${id}`, {
+    method: 'DELETE'
+  }),
   syncGoogleSheets: () => apiRequest('/admin/sync-sheets', {
     method: 'POST'
   }),

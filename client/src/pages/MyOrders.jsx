@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 
 export default function MyOrders({ onOpenAuth }) {
-  const { user } = useAuth();
+  const { user, isDemoAllowed } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -37,7 +37,9 @@ export default function MyOrders({ onOpenAuth }) {
         </div>
         <h2 className="text-xl font-bold text-white">Sign In to View Orders</h2>
         <p className="text-xs text-slate-400">
-          Sign in or use 1-Click Demo to review your recent gourmet orders and active tracking.
+          {isDemoAllowed
+            ? 'Sign in or use 1-Click Demo to review your recent gourmet orders and active tracking.'
+            : 'Sign in with your email to review your recent gourmet orders and active tracking.'}
         </p>
         <button
           onClick={onOpenAuth}

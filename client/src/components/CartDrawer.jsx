@@ -2,8 +2,9 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Trash2, Plus, Minus, ShoppingBag, ArrowRight, Sparkles } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
 
-export default function CartDrawer() {
+export default function CartDrawer({ onOpenAuth }) {
   const { 
     items, 
     itemCount, 
@@ -17,6 +18,7 @@ export default function CartDrawer() {
     removeFromCart, 
     clearCart 
   } = useCart();
+  const { isAuthenticated } = useAuth();
 
   const navigate = useNavigate();
 
@@ -28,6 +30,10 @@ export default function CartDrawer() {
 
   const handleProceedToCheckout = () => {
     closeCart();
+    if (!isAuthenticated) {
+      if (onOpenAuth) onOpenAuth();
+      return;
+    }
     navigate('/checkout');
   };
 

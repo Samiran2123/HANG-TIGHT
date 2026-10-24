@@ -37,6 +37,12 @@ export function validateOrderInput(req, res, next) {
     }
   }
 
+  const validPaymentMethods = ['cod', 'card_demo', 'upi_demo'];
+  const paymentMethod = req.body.payment_method;
+  if (paymentMethod !== undefined && paymentMethod !== null && !validPaymentMethods.includes(paymentMethod)) {
+    errors.push(`Invalid payment method "${paymentMethod}". Permitted methods are "cod", "card_demo", or "upi_demo".`);
+  }
+
   if (errors.length > 0) {
     return res.status(400).json({
       success: false,
@@ -85,6 +91,28 @@ export function validateStatusUpdate(req, res, next) {
     return res.status(400).json({
       success: false,
       error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+    });
+  }
+
+  next();
+}
+
+/**
+ * Validates category creation or update payload
+ */
+export function validateCategoryInput(req, res, next) {
+  const { name } = req.body;
+  const errors = [];
+
+  if (!name || typeof name !== 'string' || name.trim().length < 2) {
+    errors.push('Category name is required and must be at least 2 characters.');
+  }
+
+  if (errors.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation failed',
+      details: errors
     });
   }
 

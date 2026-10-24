@@ -12,7 +12,7 @@ export default function Footer() {
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-amber-600 flex items-center justify-center text-white">
                 <Flame className="w-4 h-4" />
               </div>
-              <span className="text-base font-bold text-white font-serif tracking-tight">AURA Gourmet</span>
+              <span className="text-base font-bold text-white font-serif tracking-tight">HANG TIGHT</span>
             </div>
             <p className="text-slate-400 leading-relaxed text-xs">
               Artisanal smash burgers, hand-stretched Neapolitan sourdough pizzas, and craft bowls prepared fresh to order.
@@ -58,7 +58,7 @@ export default function Footer() {
         </div>
 
         <div className="border-t border-slate-900 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-500">
-          <p>© {new Date().getFullYear()} AURA Gourmet Pro. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} HANG TIGHT. All rights reserved.</p>
           <p className="flex items-center gap-1">
             Engineered with <Heart className="w-3 h-3 text-rose-500 fill-rose-500" /> for Live Demonstration
           </p>

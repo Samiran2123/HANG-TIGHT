@@ -29,6 +29,13 @@ export function getAdminClient() {
 }
 
 /**
+ * Sets the administrative client for unit testing purposes
+ */
+export function setAdminClientForTesting(client) {
+  supabaseAdmin = client;
+}
+
+/**
  * Creates a client scoped to the user's JWT authorization token for RLS enforcement
  */
 export function getUserClient(jwtToken) {

@@ -18,9 +18,9 @@ import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 
-export default function Checkout() {
-  const { items, subtotal, tax, deliveryFee, total, clearCart } = useCart();
-  const { user, profile } = useAuth();
+export default function Checkout({ onOpenAuth }) {
+  const { items, subtotal, tax, deliveryFee, total, clearCart, isCartReady } = useCart();
+  const { user, profile, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
@@ -48,6 +48,48 @@ export default function Checkout() {
     }
   }, [profile, user]);
 
+  // Loading gate to prevent state flash while authentication/cart settles
+  if (authLoading || !isCartReady) {
+    return (
+      <div className="max-w-xl mx-auto my-16 p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center space-y-4 animate-fade-in">
+        <div className="w-12 h-12 rounded-2xl bg-brand-500/10 text-brand-400 mx-auto flex items-center justify-center animate-pulse">
+          <ShieldCheck className="w-6 h-6" />
+        </div>
+        <p className="text-xs text-slate-400">Verifying customer session and loading your cart...</p>
+      </div>
+    );
+  }
+
+  // Unauthenticated Guard: Guests must sign in before viewing checkout form
+  if (!user) {
+    return (
+      <div className="max-w-xl mx-auto my-16 p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center space-y-4 animate-fade-in">
+        <div className="w-16 h-16 rounded-2xl bg-brand-500/10 text-brand-400 mx-auto flex items-center justify-center">
+          <ShieldCheck className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-white">Sign In Required</h2>
+        <p className="text-xs text-slate-400 max-w-sm mx-auto">
+          Please sign in to your account to review and complete your order.
+        </p>
+        <div className="pt-2 flex justify-center gap-3">
+          <button
+            onClick={onOpenAuth}
+            id="checkout-signin-btn"
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-brand-500 to-amber-600 hover:from-brand-600 hover:to-amber-700 text-white text-xs font-semibold shadow-lg shadow-brand-500/20"
+          >
+            Sign In to Continue
+          </button>
+          <Link
+            to="/"
+            className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium"
+          >
+            Return to Menu
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   // If cart is empty, redirect to menu
   if (items.length === 0) {
     return (
@@ -70,6 +112,7 @@ export default function Checkout() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     setError(null);
 
@@ -270,7 +313,7 @@ export default function Checkout() {
                 />
                 <div className="flex items-center justify-between mb-2">
                   <QrCode className="w-5 h-5 text-emerald-400" />
-                  <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">Instant</span>
+                  <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">Demo</span>
                 </div>
                 <span className="text-xs font-bold block">UPI / QR Code</span>
                 <span className="text-[10px] text-slate-400 block mt-0.5">Scan to pay simulation</span>

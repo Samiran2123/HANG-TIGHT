@@ -50,6 +50,12 @@ router.put('/profile', authenticateToken, async (req, res, next) => {
       if (error) throw error;
       updatedProfile = data;
     } else {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({
+          success: false,
+          error: 'Profile updates unavailable in production: Supabase connection is not configured.'
+        });
+      }
       let p = mockProfiles.find(x => x.id === userId);
       if (!p) {
         p = { id: userId, email: req.user.email, role: 'customer' };

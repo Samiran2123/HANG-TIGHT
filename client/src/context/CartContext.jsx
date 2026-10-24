@@ -1,26 +1,78 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { useAuth } from './AuthContext';
 
 const CartContext = createContext(null);
 
-export function CartProvider({ children }) {
-  const [items, setItems] = useState(() => {
-    try {
-      const saved = localStorage.getItem('aura_cart');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+function readCartFromStorage(key) {
+  try {
+    const saved = localStorage.getItem(key);
+    if (!saved) return [];
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
+function writeCartToStorage(key, items) {
+  try {
+    localStorage.setItem(key, JSON.stringify(items));
+  } catch (e) {
+    console.error(`Failed to persist cart for key ${key}:`, e);
+  }
+}
+
+export function CartProvider({ children }) {
+  const { user, loading: authLoading } = useAuth();
+  const [items, setItems] = useState([]);
+  const [isCartReady, setIsCartReady] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
 
+  const activeKeyRef = useRef(null);
+  const prevUserIdRef = useRef(undefined);
+
+  // Safe one-time legacy cart migration to guest cart
   useEffect(() => {
     try {
-      localStorage.setItem('aura_cart', JSON.stringify(items));
+      const legacy = localStorage.getItem('aura_cart');
+      if (legacy && !localStorage.getItem('aura_cart_guest')) {
+        localStorage.setItem('aura_cart_guest', legacy);
+      }
+      if (legacy) {
+        localStorage.removeItem('aura_cart');
+      }
     } catch (e) {
-      console.error('Failed to persist cart:', e);
+      console.warn('Legacy cart migration notice:', e);
     }
-  }, [items]);
+  }, []);
+
+  // Account switch, sign-in, and sign-out hydration lifecycle
+  useEffect(() => {
+    if (authLoading) return;
+
+    const currentUserId = user?.id || null;
+    const targetKey = currentUserId ? `aura_cart_${currentUserId}` : 'aura_cart_guest';
+
+    if (prevUserIdRef.current !== currentUserId || !isCartReady) {
+      // If already initialized, persist current in-memory items to outgoing key before switching
+      if (isCartReady && activeKeyRef.current) {
+        writeCartToStorage(activeKeyRef.current, items);
+      }
+
+      // Hydrate from target key without merging
+      const loaded = readCartFromStorage(targetKey);
+      setItems(loaded);
+      activeKeyRef.current = targetKey;
+      prevUserIdRef.current = currentUserId;
+      setIsCartReady(true);
+    }
+  }, [user?.id, authLoading, isCartReady]);
+
+  // Persist items updates to currently active key
+  useEffect(() => {
+    if (!isCartReady || authLoading || !activeKeyRef.current) return;
+    writeCartToStorage(activeKeyRef.current, items);
+  }, [items, isCartReady, authLoading]);
 
   const addToCart = (food, quantity = 1) => {
     setItems((prev) => {
@@ -56,7 +108,7 @@ export function CartProvider({ children }) {
     setItems([]);
   };
 
-  const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+  const itemCount = isCartReady ? items.reduce((sum, item) => sum + item.quantity, 0) : 0;
 
   const subtotal = Number(
     items
@@ -76,6 +128,7 @@ export function CartProvider({ children }) {
     deliveryFee,
     total,
     isCartOpen,
+    isCartReady,
     openCart: () => setIsCartOpen(true),
     closeCart: () => setIsCartOpen(false),
     addToCart,

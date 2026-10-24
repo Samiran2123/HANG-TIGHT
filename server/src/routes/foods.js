@@ -12,6 +12,12 @@ router.get('/categories', async (req, res, next) => {
   const supabase = getAdminClient();
 
   if (!supabase) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({
+        success: false,
+        error: 'Categories unavailable in production: Supabase connection is not configured.'
+      });
+    }
     return res.json({ success: true, data: mockCategories });
   }
 
@@ -22,6 +28,9 @@ router.get('/categories', async (req, res, next) => {
       .order('sort_order', { ascending: true });
 
     if (error) {
+      if (process.env.NODE_ENV === 'production') {
+        throw error;
+      }
       console.warn('Supabase categories error, falling back to mock data:', error.message);
       return res.json({ success: true, data: mockCategories });
     }
@@ -41,6 +50,12 @@ router.get('/', async (req, res, next) => {
   const supabase = getAdminClient();
 
   if (!supabase) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({
+        success: false,
+        error: 'Food catalog unavailable in production: Supabase connection is not configured.'
+      });
+    }
     let result = [...mockFoods];
 
     if (availableOnly !== 'false') {
@@ -106,6 +121,9 @@ router.get('/', async (req, res, next) => {
     const { data, error } = await query;
 
     if (error) {
+      if (process.env.NODE_ENV === 'production') {
+        throw error;
+      }
       console.warn('Supabase foods fetch error, using mock data:', error.message);
       return res.json({ success: true, count: mockFoods.length, data: mockFoods });
     }
@@ -125,6 +143,12 @@ router.get('/:id', async (req, res, next) => {
   const supabase = getAdminClient();
 
   if (!supabase) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({
+        success: false,
+        error: 'Food item unavailable in production: Supabase connection is not configured.'
+      });
+    }
     const item = mockFoods.find(f => f.id === id);
     if (!item) {
       return res.status(404).json({ success: false, error: 'Food item not found' });
@@ -140,6 +164,9 @@ router.get('/:id', async (req, res, next) => {
       .single();
 
     if (error || !data) {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ success: false, error: 'Food item not found' });
+      }
       const fallback = mockFoods.find(f => f.id === id);
       if (fallback) return res.json({ success: true, data: fallback });
       return res.status(404).json({ success: false, error: 'Food item not found' });

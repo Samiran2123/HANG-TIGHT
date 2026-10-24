@@ -32,7 +32,7 @@ export default function OrderConfirmation() {
         </div>
 
         <h1 className="text-3xl sm:text-4xl font-extrabold text-white font-serif tracking-tight">
-          Thank you for dining with AURA!
+          Thank you for dining with HANG TIGHT!
         </h1>
         <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto">
           Your order has been recorded in our database and synchronized for preparation.

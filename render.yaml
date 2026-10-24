@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: hang-tight-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GOOGLE_SHEETS_WEBHOOK_URL
+        sync: false
+      - key: GOOGLE_SHEETS_SECRET
+        sync: false
+      - key: APP_DELIVERY_FEE
+        value: "4.99"
+      - key: APP_TAX_RATE
+        value: "0.0825"

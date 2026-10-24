@@ -1,7 +1,7 @@
 import express from 'express';
 import { getAdminClient } from '../services/supabase.js';
 import { sheetsService } from '../services/sheetsService.js';
-import { config } from '../config/env.js';
+import { config, isDemoAuthAllowed } from '../config/env.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { validateOrderInput } from '../middleware/validation.js';
 import { mockOrders, mockFoods } from '../services/mockStore.js';
@@ -20,8 +20,9 @@ function generateOrderNumber() {
 /**
  * POST /api/orders
  * Creates a verified order with server-calculated pricing and triggers Google Sheets sync
+ * Requires a valid authenticated session; customer identity is derived strictly from the session.
  */
-router.post('/', validateOrderInput, async (req, res, next) => {
+router.post('/', authenticateToken, validateOrderInput, async (req, res, next) => {
   const {
     customer_name,
     customer_email,
@@ -29,93 +30,15 @@ router.post('/', validateOrderInput, async (req, res, next) => {
     delivery_address,
     delivery_notes,
     payment_method = 'cod',
-    items,
-    user_id
+    items
   } = req.body;
 
-  // Optional authentication: user may be logged in or ordering as registered guest
-  let authenticatedUserId = user_id || null;
-  const authHeader = req.headers.authorization;
-  if (authHeader) {
-    try {
-      const token = authHeader.split(' ')[1];
-      if (token === 'demo-customer-token') {
-        authenticatedUserId = '00000000-0000-0000-0000-000000000001';
-      } else {
-        const supabase = getAdminClient();
-        if (supabase) {
-          const { data: { user } } = await supabase.auth.getUser(token);
-          if (user) authenticatedUserId = user.id;
-        }
-      }
-    } catch {
-      // Proceed with provided or guest user_id
-    }
-  }
+  // Strict session-derived user identification: NEVER trust req.body.user_id
+  const authenticatedUserId = req.user.id;
 
   const supabase = getAdminClient();
 
   try {
-    let verifiedFoods = [];
-    const foodIds = items.map(i => i.food_id);
-
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('foods')
-        .select('id, name, price, is_available')
-        .in('id', foodIds);
-
-      if (error) {
-        console.warn('Error fetching foods from Supabase, falling back to mock:', error.message);
-        verifiedFoods = mockFoods.filter(f => foodIds.includes(f.id));
-      } else {
-        verifiedFoods = data;
-      }
-    } else {
-      verifiedFoods = mockFoods.filter(f => foodIds.includes(f.id));
-    }
-
-    // 1. Authoritative price and availability verification
-    const foodMap = new Map(verifiedFoods.map(f => [f.id, f]));
-    const validatedOrderItems = [];
-    let calculatedSubtotal = 0;
-
-    for (const item of items) {
-      const dbFood = foodMap.get(item.food_id);
-      if (!dbFood) {
-        return res.status(400).json({
-          success: false,
-          error: `Food item with ID ${item.food_id} no longer exists.`
-        });
-      }
-
-      if (!dbFood.is_available) {
-        return res.status(400).json({
-          success: false,
-          error: `Item "${dbFood.name}" is currently sold out or unavailable.`
-        });
-      }
-
-      const unitPrice = Number(dbFood.price);
-      const qty = parseInt(item.quantity, 10);
-      const lineSubtotal = Number((unitPrice * qty).toFixed(2));
-
-      calculatedSubtotal += lineSubtotal;
-
-      validatedOrderItems.push({
-        food_id: dbFood.id,
-        food_name: dbFood.name,
-        unit_price: unitPrice,
-        quantity: qty,
-        subtotal: lineSubtotal
-      });
-    }
-
-    // 2. Authoritative tax, delivery fee, and grand total calculations
-    const subtotal = Number(calculatedSubtotal.toFixed(2));
-    const tax = Number((subtotal * config.app.taxRate).toFixed(2));
-    const deliveryFee = subtotal > 50 ? 0.00 : config.app.deliveryFee; // Free delivery over $50
-    const totalAmount = Number((subtotal + tax + deliveryFee).toFixed(2));
     const orderNumber = generateOrderNumber();
 
     const orderPayload = {
@@ -127,57 +50,92 @@ router.post('/', validateOrderInput, async (req, res, next) => {
       delivery_address: delivery_address.trim(),
       delivery_notes: delivery_notes ? delivery_notes.trim() : null,
       status: 'pending',
-      subtotal,
-      tax,
-      delivery_fee: deliveryFee,
-      total_amount: totalAmount,
       payment_status: payment_method === 'cod' ? 'pending' : 'demo_paid',
       payment_method,
-      sheets_synced: false,
-      created_at: new Date().toISOString()
+      sheets_synced: false
     };
+
+    const itemsPayload = items.map(item => ({
+      food_id: item.food_id,
+      quantity: parseInt(item.quantity, 10)
+    }));
 
     let createdOrder = null;
 
     if (supabase) {
-      // Insert into Supabase
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .insert([orderPayload])
-        .select()
-        .single();
+      // 1. Authoritative atomic creation via trusted database function
+      // Passing ONLY validated order/customer inputs and item IDs/quantities.
+      // Database calculates trusted unit prices, subtotal, tax, delivery fee, and totals.
+      const { data: orderData, error: rpcError } = await supabase.rpc('create_order_atomic', {
+        p_order: orderPayload,
+        p_items: itemsPayload
+      });
 
-      if (orderError) {
-        console.error('Supabase order insert error:', orderError);
-        throw new Error(`Failed to save order to Supabase: ${orderError.message}`);
+      if (rpcError) {
+        console.error('Database create_order_atomic error:', rpcError);
+        return res.status(400).json({
+          success: false,
+          error: rpcError.message || 'Failed to place order.'
+        });
       }
 
       createdOrder = orderData;
+    } else {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({
+          success: false,
+          error: 'Order placement unavailable in production: Supabase database connection is not configured.'
+        });
+      }
+      // 2. In-memory fallback (used in unit tests / offline demonstration mode)
+      const foodIds = itemsPayload.map(i => i.food_id);
+      const verifiedFoods = mockFoods.filter(f => foodIds.includes(f.id));
+      const foodMap = new Map(verifiedFoods.map(f => [f.id, f]));
+      const validatedOrderItems = [];
+      let calculatedSubtotal = 0;
 
-      // Insert Order Items
-      const itemsToInsert = validatedOrderItems.map(item => ({
-        order_id: createdOrder.id,
-        food_id: item.food_id,
-        food_name: item.food_name,
-        unit_price: item.unit_price,
-        quantity: item.quantity,
-        subtotal: item.subtotal
-      }));
+      for (const item of itemsPayload) {
+        const dbFood = foodMap.get(item.food_id);
+        if (!dbFood) {
+          return res.status(400).json({
+            success: false,
+            error: `Food item with ID ${item.food_id} no longer exists.`
+          });
+        }
 
-      const { data: insertedItems, error: itemsError } = await supabase
-        .from('order_items')
-        .insert(itemsToInsert)
-        .select();
+        if (!dbFood.is_available) {
+          return res.status(400).json({
+            success: false,
+            error: `Item "${dbFood.name}" is currently sold out or unavailable.`
+          });
+        }
 
-      if (itemsError) {
-        console.error('Supabase order items error:', itemsError);
+        const unitPrice = Number(dbFood.price);
+        const qty = item.quantity;
+        const lineSubtotal = Number((unitPrice * qty).toFixed(2));
+        calculatedSubtotal += lineSubtotal;
+
+        validatedOrderItems.push({
+          food_id: dbFood.id,
+          food_name: dbFood.name,
+          unit_price: unitPrice,
+          quantity: qty,
+          subtotal: lineSubtotal
+        });
       }
 
-      createdOrder.items = insertedItems || validatedOrderItems;
-    } else {
-      // In-memory fallback
+      const subtotal = Number(calculatedSubtotal.toFixed(2));
+      const tax = Number((subtotal * config.app.taxRate).toFixed(2));
+      const deliveryFee = subtotal > 50 ? 0.00 : config.app.deliveryFee;
+      const totalAmount = Number((subtotal + tax + deliveryFee).toFixed(2));
+
       createdOrder = {
         ...orderPayload,
+        subtotal,
+        tax,
+        delivery_fee: deliveryFee,
+        total_amount: totalAmount,
+        created_at: new Date().toISOString(),
         id: `ord-mock-${Date.now()}`,
         items: validatedOrderItems.map((item, idx) => ({
           id: `item-mock-${Date.now()}-${idx}`,
@@ -246,6 +204,9 @@ router.get('/my-orders', authenticateToken, async (req, res, next) => {
       .order('created_at', { ascending: false });
 
     if (error) {
+      if (process.env.NODE_ENV === 'production') {
+        throw error;
+      }
       console.warn('Supabase my-orders fetch error, using fallback:', error.message);
       const fallback = mockOrders.filter(o => o.user_id === userId || o.customer_email === userEmail);
       return res.json({ success: true, count: fallback.length, data: fallback });
@@ -266,6 +227,12 @@ router.get('/track/:identifier', async (req, res, next) => {
   const supabase = getAdminClient();
 
   if (!supabase) {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({
+        success: false,
+        error: 'Order tracking unavailable in production: Supabase database connection is not configured.'
+      });
+    }
     const order = mockOrders.find(o => o.id === identifier || o.order_number?.toLowerCase() === identifier.toLowerCase());
     if (!order) {
       return res.status(404).json({ success: false, error: 'Order not found with provided tracking ID.' });
@@ -286,6 +253,9 @@ router.get('/track/:identifier', async (req, res, next) => {
     const { data, error } = await query.single();
 
     if (error || !data) {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ success: false, error: 'Order not found.' });
+      }
       const fallback = mockOrders.find(o => o.id === identifier || o.order_number?.toLowerCase() === identifier.toLowerCase());
       if (fallback) return res.json({ success: true, data: fallback });
       return res.status(404).json({ success: false, error: 'Order not found.' });

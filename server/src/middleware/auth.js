@@ -1,4 +1,5 @@
 import { getAdminClient } from '../services/supabase.js';
+import { isDemoAuthAllowed } from '../config/env.js';
 
 /**
  * Extracts Bearer token from Authorization header
@@ -26,36 +27,38 @@ export async function authenticateToken(req, res, next) {
     });
   }
 
-  // Support demo token for evaluators without active Supabase project
-  if (token === 'demo-customer-token') {
-    req.user = { id: '00000000-0000-0000-0000-000000000001', email: 'demo.customer@foodpro.app' };
-    req.profile = {
-      id: req.user.id,
-      email: req.user.email,
-      full_name: 'Demo Gourmet Customer',
-      phone: '+1 (555) 234-5678',
-      role: 'customer',
-      address: '742 Evergreen Terrace, Springfield'
-    };
-    return next();
-  }
+  // Support demo token for evaluators strictly when explicitly allowed in non-production
+  if (isDemoAuthAllowed()) {
+    if (token === 'demo-customer-token') {
+      req.user = { id: '00000000-0000-0000-0000-000000000001', email: 'demo.customer@foodpro.app' };
+      req.profile = {
+        id: req.user.id,
+        email: req.user.email,
+        full_name: 'Demo Gourmet Customer',
+        phone: '+1 (555) 234-5678',
+        role: 'customer',
+        address: '742 Evergreen Terrace, Springfield'
+      };
+      return next();
+    }
 
-  if (token === 'demo-admin-token') {
-    req.user = { id: '00000000-0000-0000-0000-000000000002', email: 'admin@foodpro.app' };
-    req.profile = {
-      id: req.user.id,
-      email: req.user.email,
-      full_name: 'Executive Chef Admin',
-      phone: '+1 (555) 888-9999',
-      role: 'admin',
-      address: 'Culinary HQ, Suite 100'
-    };
-    return next();
+    if (token === 'demo-admin-token') {
+      req.user = { id: '00000000-0000-0000-0000-000000000002', email: 'admin@foodpro.app' };
+      req.profile = {
+        id: req.user.id,
+        email: req.user.email,
+        full_name: 'Executive Chef Admin',
+        phone: '+1 (555) 888-9999',
+        role: 'admin',
+        address: 'Culinary HQ, Suite 100'
+      };
+      return next();
+    }
   }
 
   const supabase = getAdminClient();
   if (!supabase) {
-    return res.status(500).json({
+    return res.status(503).json({
       success: false,
       error: 'Authentication service unavailable: Supabase client not configured.'
     });
